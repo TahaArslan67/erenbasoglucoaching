@@ -18,6 +18,11 @@ const defaultResults = [
 ]
 const defaultSiteContent = { about: { kicker: '02 / HAKKIMDA', title: 'Sadece sonuç değil, sistem inşa ediyoruz.', text: 'Eren Başoğlu Coaching; antrenman, beslenme ve zihinsel dayanıklılığı tek bir sürdürülebilir sistemde birleştirir.', number: '01', subTitle: 'Herkese uyan tek bir plan yok.', paragraphOne: 'Vücudun, hayatın, hedeflerin ve geçmişin sana özel. Bu yüzden seni hazır kalıplara sokmak yerine; ölçülebilir, anlaşılır ve hayata uyum sağlayan bir yol haritası oluşturuyoruz.', paragraphTwo: 'İster yağ oranını düşürmek, ister kas kütleni artırmak, ister günlük enerjini yükseltmek iste. Sürecin her aşamasında veriye ve gerçek hayata göre ilerliyoruz.', cta: 'Birlikte başlayalım' },  services: { intro: 'İhtiyacına göre şekillenen, seni hedefinden koparmayan koçluk modelleri.', personal: 'Hedefine özel antrenman planı, doğru teknik ve düzenli takip ile potansiyelini ortaya çıkar.', nutrition: 'Yasaklar yerine dengeyi öğreten, günlük yaşamına uyumlu kişisel beslenme sistemi.', transformation: 'Antrenman, beslenme ve alışkanlık takibini tek çatı altında birleştiren kapsamlı koçluk.' }, faqs: [{ question: 'Online koçluk nasıl işliyor?', answer: 'Hedeflerine ve yaşam düzenine göre kişisel plan oluşturuyor, düzenli takip ediyoruz.' }, { question: 'Program ne kadar sürüyor?', answer: 'İhtiyaca göre belirlenir; ilk değerlendirmeden sonra sana özel süreç planını paylaşırız.' }] }
 
+const apiHeaders = () => {
+  const token = sessionStorage.getItem('admin-token')
+  return { 'content-type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+}
+
 function App() {
   const [page, setPage] = useState(window.location.hash.slice(1) || 'home')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -28,8 +33,34 @@ function App() {
   const [applications, setApplications] = useState(() => JSON.parse(localStorage.getItem('eren-applications') || '[]'))
   const [siteContent, setSiteContent] = useState(() => { const stored = JSON.parse(localStorage.getItem('eren-site-content') || 'null') || {}; return { ...defaultSiteContent, ...stored, about: { ...defaultSiteContent.about, ...(stored.about || {}) }, services: { ...defaultSiteContent.services, ...(stored.services || {}) }, faqs: stored.faqs || defaultSiteContent.faqs } })
   useEffect(() => { const syncPage = () => setPage(window.location.hash.slice(1) || 'home'); window.addEventListener('hashchange', syncPage); return () => window.removeEventListener('hashchange', syncPage) }, [])
+  useEffect(() => {
+    const loadApiData = async () => {
+      try {
+        const [contentResponse, transformationsResponse] = await Promise.all([fetch('/api/content'), fetch('/api/transformations')])
+        if (contentResponse.ok) {
+          const content = await contentResponse.json()
+          setSiteContent((current) => ({ ...current, ...content, about: { ...current.about, ...(content.about || {}) }, services: { ...current.services, ...(content.services || {}) }, faqs: content.faqs || current.faqs }))
+        }
+        if (transformationsResponse.ok) {
+          const transformations = await transformationsResponse.json()
+          if (Array.isArray(transformations)) {
+            setResults(transformations)
+            localStorage.setItem('eren-results', JSON.stringify(transformations))
+          }
+        }
+      } catch {
+        // Keep the localStorage/default data when the API is unavailable.
+      }
+    }
+    loadApiData()
+  }, [])
 
-  const saveContent = (section, value) => { const next = { ...siteContent, [section]: value }; setSiteContent(next); localStorage.setItem('eren-site-content', JSON.stringify(next)) }
+  const saveContent = (section, value) => {
+    const next = { ...siteContent, [section]: value }
+    setSiteContent(next)
+    localStorage.setItem('eren-site-content', JSON.stringify(next))
+    fetch(`/api/content/${encodeURIComponent(section)}`, { method: 'PUT', headers: apiHeaders(), body: JSON.stringify(value) }).catch(() => {})
+  }
 
   const go = (nextPage) => {
     window.location.hash = nextPage
@@ -46,31 +77,63 @@ function App() {
     const next = [{ ...data, id: Date.now(), createdAt: new Date().toLocaleDateString('tr-TR') }, ...applications]
     setApplications(next)
     localStorage.setItem('eren-applications', JSON.stringify(next))
+    fetch('/api/applications', { method: 'POST', headers: apiHeaders(), body: JSON.stringify(data) }).catch(() => {})
     setApplicationSent(true)
     event.currentTarget.reset()
   }
 
-  const adminLogin = (event) => {
+  const adminLogin = async (event) => {
     event.preventDefault()
-    const data = Object.fromEntries(new FormData(event.currentTarget))
-    const username = import.meta.env.VITE_ADMIN_USERNAME || 'erenbasoglu'
-    const password = import.meta.env.VITE_ADMIN_PASSWORD || ''
-    if (data.username === username && data.password === password) setAdminLoggedIn(true)
-    else event.currentTarget.querySelector('.login-error').textContent = 'Kullanıcı adı veya şifre hatalı.'
+    const form = event.currentTarget
+    const data = Object.fromEntries(new FormData(form))
+    const showLoginError = () => { form.querySelector('.login-error').textContent = 'Kullanıcı adı veya şifre hatalı.' }
+    try {
+      const response = await fetch('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+      if (!response.ok) return showLoginError()
+      const result = await response.json()
+      if (!result.token) return showLoginError()
+      sessionStorage.setItem('admin-token', result.token)
+      setAdminLoggedIn(true)
+    } catch {
+      const username = import.meta.env.VITE_ADMIN_USERNAME || 'erenbasoglu'
+      const password = import.meta.env.VITE_ADMIN_PASSWORD || ''
+      if (data.username === username && data.password === password) {
+        sessionStorage.setItem('admin-token', data.password)
+        setAdminLoggedIn(true)
+      } else showLoginError()
+    }
   }
 
   const removeApplication = (id) => {
     const next = applications.filter((item) => item.id !== id)
     setApplications(next)
     localStorage.setItem('eren-applications', JSON.stringify(next))
+    fetch(`/api/applications/${encodeURIComponent(id)}`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {})
   }
 
   const removeResult = (index) => {
+    const result = results[index]
     const next = results.filter((_, itemIndex) => itemIndex !== index)
     setResults(next)
     localStorage.setItem('eren-results', JSON.stringify(next))
+    if (result?.id) fetch(`/api/transformations/${encodeURIComponent(result.id)}`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {})
   }
-  const addResult = (item) => { const next = [item, ...results]; setResults(next); localStorage.setItem('eren-results', JSON.stringify(next)) }
+  const addResult = (item) => {
+    const next = [item, ...results]
+    setResults(next)
+    localStorage.setItem('eren-results', JSON.stringify(next))
+    fetch('/api/transformations', { method: 'POST', headers: apiHeaders(), body: JSON.stringify(item) })
+      .then((response) => { if (!response.ok) throw new Error('Unable to save transformation'); return response.json() })
+      .then((savedResult) => {
+        const result = { ...item, ...savedResult }
+        setResults((current) => {
+          const updated = [result, ...current.filter((currentResult) => currentResult !== item)]
+          localStorage.setItem('eren-results', JSON.stringify(updated))
+          return updated
+        })
+      })
+      .catch(() => {})
+  }
 
   return (
     <div className="site-shell">
