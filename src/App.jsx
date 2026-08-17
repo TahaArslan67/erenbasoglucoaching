@@ -226,7 +226,7 @@ function ExerciseAcademy() { const [remoteExercises, setRemoteExercises] = useSt
   const [side, setSide] = useState('Ön')
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = 12
-  const sourceExercises = [...exerciseData, ...remoteExercises].filter((item, index, items) => items.findIndex((candidate) => candidate.name.toLowerCase() === item.name.toLowerCase()) === index)
+  const sourceExercises = [...remoteExercises, ...exerciseData].filter((item, index, items) => items.findIndex((candidate) => candidate.name.toLowerCase() === item.name.toLowerCase()) === index)
   const allExercises = sourceExercises
   const filtered = allExercises.filter((item) => (!query || item.name.toLowerCase().includes(query.toLowerCase())) && (!muscle || item.body === muscle) && (!level || item.level === level) && (!equipment || item.equipment === equipment))
   const shown = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
