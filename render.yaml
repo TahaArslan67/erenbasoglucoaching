@@ -2,6 +2,7 @@ services:
   - type: web
     name: erenbasoglu-coaching
     runtime: node
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
@@ -9,7 +10,6 @@ services:
       - key: DATABASE_URL
         fromDatabase:
           name: erenbasoglu-coaching-db
-    plan: free
           property: connectionString
       - key: ADMIN_USERNAME
         sync: false
@@ -20,3 +20,4 @@ services:
 
 databases:
   - name: erenbasoglu-coaching-db
+    plan: free
