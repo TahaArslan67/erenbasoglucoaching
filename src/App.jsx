@@ -22,7 +22,7 @@ const defaultResults = [
 const defaultSiteContent = { about: { kicker: '02 / HAKKIMDA', title: 'Sadece sonuç değil, sistem inşa ediyoruz.', text: 'Eren Başoğlu Coaching; antrenman, beslenme ve zihinsel dayanıklılığı tek bir sürdürülebilir sistemde birleştirir.', number: '01', subTitle: 'Herkese uyan tek bir plan yok.', paragraphOne: 'Vücudun, hayatın, hedeflerin ve geçmişin sana özel. Bu yüzden seni hazır kalıplara sokmak yerine; ölçülebilir, anlaşılır ve hayata uyum sağlayan bir yol haritası oluşturuyoruz.', paragraphTwo: 'İster yağ oranını düşürmek, ister kas kütleni artırmak, ister günlük enerjini yükseltmek iste. Sürecin her aşamasında veriye ve gerçek hayata göre ilerliyoruz.', cta: 'Birlikte başlayalım' },  services: { intro: 'İhtiyacına göre şekillenen, seni hedefinden koparmayan koçluk modelleri.', personal: 'Hedefine özel antrenman planı, doğru teknik ve düzenli takip ile potansiyelini ortaya çıkar.', nutrition: 'Yasaklar yerine dengeyi öğreten, günlük yaşamına uyumlu kişisel beslenme sistemi.', transformation: 'Antrenman, beslenme ve alışkanlık takibini tek çatı altında birleştiren kapsamlı koçluk.' }, faqs: [{ question: 'Online koçluk nasıl işliyor?', answer: 'Hedeflerine ve yaşam düzenine göre kişisel plan oluşturuyor, düzenli takip ediyoruz.' }, { question: 'Program ne kadar sürüyor?', answer: 'İhtiyaca göre belirlenir; ilk değerlendirmeden sonra sana özel süreç planını paylaşırız.' }] }
 
 const apiHeaders = () => {
-  const token = sessionStorage.getItem('admin-token')
+  const token = localStorage.getItem('admin-token')
   return { 'content-type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
 }
 
@@ -30,12 +30,58 @@ function App() {
   const [page, setPage] = useState(window.location.hash.slice(1) || 'home')
   const [menuOpen, setMenuOpen] = useState(false)
   const [applicationSent, setApplicationSent] = useState(false)
-  const [adminLoggedIn, setAdminLoggedIn] = useState(false)
+  const [adminLoggedIn, setAdminLoggedIn] = useState(() => Boolean(localStorage.getItem('admin-token')))
   const [adminTab, setAdminTab] = useState('applications')
   const [results, setResults] = useState(() => JSON.parse(localStorage.getItem('eren-results') || 'null') || defaultResults)
   const [applications, setApplications] = useState(() => JSON.parse(localStorage.getItem('eren-applications') || '[]'))
   const [siteContent, setSiteContent] = useState(() => { const stored = JSON.parse(localStorage.getItem('eren-site-content') || 'null') || {}; return { ...defaultSiteContent, ...stored, about: { ...defaultSiteContent.about, ...(stored.about || {}) }, services: { ...defaultSiteContent.services, ...(stored.services || {}) }, faqs: stored.faqs || defaultSiteContent.faqs } })
   useEffect(() => { const syncPage = () => setPage(window.location.hash.slice(1) || 'home'); window.addEventListener('hashchange', syncPage); return () => window.removeEventListener('hashchange', syncPage) }, [])
+  useEffect(() => {
+    const verifyAdminToken = async () => {
+      const token = localStorage.getItem('admin-token')
+      if (!token) return
+      try {
+        const response = await fetch('/api/applications', { headers: apiHeaders() })
+        if (response.status === 401) {
+          localStorage.removeItem('admin-token')
+          setAdminLoggedIn(false)
+          return
+        }
+        if (response.ok) {
+          const records = await response.json()
+          if (Array.isArray(records)) {
+            setApplications(records)
+            localStorage.setItem('eren-applications', JSON.stringify(records))
+          }
+        }
+      } catch {
+        // Keep the signed token and local applications when the API is unavailable.
+      }
+    }
+    verifyAdminToken()
+  }, [])
+  useEffect(() => {
+    if (!adminLoggedIn || page !== 'admin') return
+    const loadApplications = async () => {
+      try {
+        const response = await fetch('/api/applications', { headers: apiHeaders() })
+        if (response.status === 401) {
+          localStorage.removeItem('admin-token')
+          setAdminLoggedIn(false)
+          return
+        }
+        if (!response.ok) return
+        const records = await response.json()
+        if (Array.isArray(records)) {
+          setApplications(records)
+          localStorage.setItem('eren-applications', JSON.stringify(records))
+        }
+      } catch {
+        // Keep local applications as an offline fallback.
+      }
+    }
+    loadApplications()
+  }, [adminLoggedIn, page])
   useEffect(() => {
     const loadApiData = async () => {
       try {
@@ -74,13 +120,28 @@ function App() {
 
   const whatsappLink = useMemo(() => `https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Merhaba Eren, koçluk programları hakkında bilgi almak istiyorum.')}`, [])
 
-  const submitApplication = (event) => {
+  const submitApplication = async (event) => {
     event.preventDefault()
     const data = Object.fromEntries(new FormData(event.currentTarget))
-    const next = [{ ...data, id: Date.now(), createdAt: new Date().toLocaleDateString('tr-TR') }, ...applications]
+    const optimisticApplication = { ...data, id: `local-${Date.now()}`, createdAt: new Date().toISOString() }
+    const next = [optimisticApplication, ...applications]
     setApplications(next)
     localStorage.setItem('eren-applications', JSON.stringify(next))
-    fetch('/api/applications', { method: 'POST', headers: apiHeaders(), body: JSON.stringify(data) }).catch(() => {})
+    try {
+      const response = await fetch('/api/applications', { method: 'POST', headers: apiHeaders(), body: JSON.stringify(data) })
+      if (response.ok) {
+        const applicationsResponse = await fetch('/api/applications', { headers: apiHeaders() })
+        if (applicationsResponse.ok) {
+          const records = await applicationsResponse.json()
+          if (Array.isArray(records)) {
+            setApplications(records)
+            localStorage.setItem('eren-applications', JSON.stringify(records))
+          }
+        }
+      }
+    } catch {
+      // Keep the optimistic application in localStorage until the API is available.
+    }
     setApplicationSent(true)
     event.currentTarget.reset()
   }
@@ -95,23 +156,35 @@ function App() {
       if (!response.ok) return showLoginError()
       const result = await response.json()
       if (!result.token) return showLoginError()
-      sessionStorage.setItem('admin-token', result.token)
+      localStorage.setItem('admin-token', result.token)
       setAdminLoggedIn(true)
     } catch {
+      // Local development fallback only: never persist the raw password.
       const username = import.meta.env.VITE_ADMIN_USERNAME || 'erenbasoglu'
       const password = import.meta.env.VITE_ADMIN_PASSWORD || ''
-      if (data.username === username && data.password === password) {
-        sessionStorage.setItem('admin-token', data.password)
-        setAdminLoggedIn(true)
-      } else showLoginError()
+      if (import.meta.env.DEV && data.username === username && data.password === password) setAdminLoggedIn(true)
+      else showLoginError()
     }
   }
 
-  const removeApplication = (id) => {
+  const removeApplication = async (id) => {
     const next = applications.filter((item) => item.id !== id)
     setApplications(next)
     localStorage.setItem('eren-applications', JSON.stringify(next))
-    fetch(`/api/applications/${encodeURIComponent(id)}`, { method: 'DELETE', headers: apiHeaders() }).catch(() => {})
+    try {
+      const response = await fetch(`/api/applications/${encodeURIComponent(id)}`, { method: 'DELETE', headers: apiHeaders() })
+      if (response.status === 401) {
+        localStorage.removeItem('admin-token')
+        setAdminLoggedIn(false)
+      }
+    } catch {
+      // Keep the optimistic deletion as the offline fallback.
+    }
+  }
+
+  const handleAdminLogout = () => {
+    localStorage.removeItem('admin-token')
+    setAdminLoggedIn(false)
   }
 
   const removeResult = (index) => {
@@ -160,7 +233,7 @@ function App() {
         {page === 'exercises' && <ExerciseAcademy />}
         {page === 'tools' && <AnalysisTools go={go} />}
         {page.startsWith('tool-') && <AnalysisPage type={page.slice(5).toUpperCase()} go={go} />}
-        {page === 'admin' && (adminLoggedIn ? <Admin applications={applications} results={results} tab={adminTab} setTab={setAdminTab} removeApplication={removeApplication} removeResult={removeResult} addResult={addResult} content={siteContent} saveContent={saveContent} logout={() => setAdminLoggedIn(false)} /> : <Login onSubmit={adminLogin} />)}
+        {page === 'admin' && (adminLoggedIn ? <Admin applications={applications} results={results} tab={adminTab} setTab={setAdminTab} removeApplication={removeApplication} removeResult={removeResult} addResult={addResult} content={siteContent} saveContent={saveContent} logout={handleAdminLogout} /> : <Login onSubmit={adminLogin} />)}
       </main>
 
       <footer className="site-footer"><div className="footer-main"><div className="footer-brand-col"><button className="footer-logo" onClick={() => go('home')}><img className="brand-logo" src="/eren-logo.png" alt="Eren Başoğlu Coaching" /><span>EREN BAŞOĞLU <em>COACHING</em></span></button><p>Personal training ve sürdürülebilir beslenme yaklaşımıyla hedeflerine giden yolu birlikte inşa ediyoruz.</p><div className="footer-socials"><a aria-label="Instagram" href="https://www.instagram.com/dyt.eren.basoglu/" target="_blank" rel="noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.2" y="3.2" width="17.6" height="17.6" rx="5" /><circle cx="12" cy="12" r="4.1" /><circle cx="17.5" cy="6.6" r="1" className="icon-fill" /></svg></a><a aria-label="WhatsApp" href="https://wa.me/905389698987" target="_blank" rel="noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 3.6A11.7 11.7 0 0 0 12.1 0C5.6 0 .3 5.2.3 11.7c0 2.1.5 4.1 1.6 5.9L.2 23.8l6.4-1.7a11.8 11.8 0 0 0 5.5 1.4h.1c6.5 0 11.8-5.3 11.8-11.8 0-3.1-1.3-6-3.6-8.1Zm-8.3 18c-1.7 0-3.4-.4-4.8-1.3l-.3-.2-3.8 1 1-3.7-.2-.4a9.6 9.6 0 0 1-1.5-5.2c0-5.4 4.4-9.8 9.8-9.8 2.6 0 5.1 1 6.9 2.9a9.7 9.7 0 0 1 2.9 6.9c0 5.4-4.5 9.8-10 9.8Zm5.4-7.3c-.3-.2-1.8-.9-2.1-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-.9 1.2-.2.2-.3.2-.6.1-1.6-.8-2.6-1.4-3.7-3.2-.3-.5.3-.4.9-1.4.1-.2.1-.4 0-.6l-.9-2.1c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.6.1-.9.4-.3.3-1.2 1.1-1.2 2.8s1.2 3.2 1.4 3.4c.2.2 2.4 3.7 5.8 5.1 2.2.9 2.7.7 3.2.7.5-.1 1.8-.7 2-1.4.3-.7.3-1.3.2-1.4-.1-.1-.3-.2-.6-.3Z" /></svg></a><button aria-label="İletişim" onClick={() => go('contact')}>↗</button></div></div><div className="footer-col"><h3>HIZLI ERİŞİM</h3><button onClick={() => go('home')}>Ana sayfa</button><button onClick={() => go('about')}>Hakkımda</button><button onClick={() => go('services')}>Hizmetler</button><button onClick={() => go('results')}>Dönüşümler</button><button onClick={() => go('contact')}>Başvuru</button></div><div className="footer-col"><h3>ÜCRETSİZ ARAÇLAR</h3><button onClick={() => go('tools')}>Tüm araçlar</button><button onClick={() => go('exercises')}>Egzersiz Akademisi</button><button onClick={() => go('tool-bki')}>Boy kilo endeksi</button><button onClick={() => go('tool-calorie')}>Kalori hesaplama</button><button onClick={() => go('tool-macro')}>Makro hesaplama</button></div><div className="footer-col footer-contact"><h3>İLETİŞİM</h3><span>Ankara · Eryaman</span><span>Close Friends</span><a href="tel:+905389698987">+90 538 969 89 87</a><a href="https://wa.me/905389698987" target="_blank" rel="noreferrer">WhatsApp’tan yaz ↗</a></div></div><div className="footer-bottom"><span>© 2025 Eren Başoğlu Coaching. Tüm hakları saklıdır.</span><div><button>Gizlilik</button><button>KVKK</button><button onClick={() => go('admin')}>Yönetim</button></div></div></footer>
