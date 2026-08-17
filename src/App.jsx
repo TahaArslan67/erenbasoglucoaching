@@ -201,7 +201,7 @@ const exerciseData = [
 ].map(([name, level, body, equipment, filter]) => ({ name, level, body, equipment, filter }))
 
 const muscleFilters = ['Karın', 'Dış Bacak', 'İç Bacak', 'Biceps', 'Baldır', 'Göğüs', 'Ön Kol', 'Kalça', 'Arka Bacak', 'Sırt (Lat)', 'Alt Sırt', 'Orta Sırt', 'Boyun', 'Ön Bacak', 'Omuz', 'Trapez', 'Triceps']
-const muscleNames = { abdominals: 'Karın', abs: 'Karın', pectorals: 'Göğüs', chest: 'Göğüs', biceps: 'Biceps', triceps: 'Triceps', forearms: 'Ön Kol', forearm: 'Ön Kol', quadriceps: 'Ön Bacak', quads: 'Ön Bacak', hamstrings: 'Arka Bacak', calves: 'Baldır', glutes: 'Kalça', gluteus: 'Kalça', lats: 'Sırt (Lat)', back: 'Orta Sırt', trapezius: 'Trapez', traps: 'Trapez', shoulders: 'Omuz', deltoids: 'Omuz', lower_back: 'Alt Sırt', obliques: 'Karın' }
+const muscleNames = { abdominals: 'Karın', abs: 'Karın', pectorals: 'Göğüs', chest: 'Göğüs', biceps: 'Biceps', triceps: 'Triceps', forearms: 'Ön Kol', forearm: 'Ön Kol', 'forearm muscles': 'Ön Kol', quadriceps: 'Ön Bacak', quad: 'Ön Bacak', quads: 'Ön Bacak', 'quadriceps femoris': 'Ön Bacak', hamstrings: 'Arka Bacak', hamstring: 'Arka Bacak', 'biceps femoris': 'Arka Bacak', calves: 'Baldır', calf: 'Baldır', glutes: 'Kalça', gluteus: 'Kalça', lats: 'Sırt (Lat)', latissimus: 'Sırt (Lat)', trapezius: 'Trapez', traps: 'Trapez', shoulders: 'Omuz', deltoids: 'Omuz', lower_back: 'Alt Sırt', 'lower back': 'Alt Sırt', lumbar: 'Alt Sırt', middle_back: 'Orta Sırt', 'mid back': 'Orta Sırt', rhomboids: 'Orta Sırt', neck: 'Boyun', adductor: 'İç Bacak', adductors: 'İç Bacak', 'inner thigh': 'İç Bacak', inner_thigh: 'İç Bacak', abductor: 'Dış Bacak', abductors: 'Dış Bacak', 'outer thigh': 'Dış Bacak', outer_thigh: 'Dış Bacak', obliques: 'Karın' }
 const equipmentNames = { dumbbell: 'Dambıl', barbell: 'Barbell', kettlebell: 'Kettlebell', body_weight: 'Vücut Ağırlığı', bodyweight: 'Vücut Ağırlığı', cable: 'Kablo', machine: 'Makine', band: 'Resistance Band', ez_curl_bar: 'EZ Bar' }
 const freeExerciseDbUrl = (path) => { if (!path) return ''; const encodedPath = String(path).split('/').filter(Boolean).map((segment) => encodeURIComponent(segment)).join('/'); return `https://cdn.jsdelivr.net/gh/yuhonas/free-exercise-db@main/exercises/${encodedPath}` }
 const freeExerciseDbName = (name) => String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9-]+/g, '_').replace(/^_+|_+$/g, '')
@@ -237,15 +237,66 @@ function ExerciseAcademy() { const [remoteExercises, setRemoteExercises] = useSt
 
 function ExerciseDetail({ exercise, close }) { return <div className="exercise-detail-overlay" onClick={close}><div className="exercise-detail" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}>×</button><div className="detail-media"><ExerciseImage exercise={exercise} detail /></div><div className="section-kicker">{exercise.source || 'EGZERSİZ AKADEMİSİ'}</div><h2>{exercise.name}</h2><div className="detail-tags"><span>{exercise.body}</span><span>{exercise.equipment}</span><span>{exercise.level}</span></div>{exercise.instructions?.length > 0 && <div className="detail-instructions"><h3>Uygulama adımları</h3><ol>{exercise.instructions.slice(0, 6).map((instruction) => <li key={instruction}>{instruction}</li>)}</ol></div>}<p className="detail-license">Görsel/video kaynağı: {exercise.source || 'ExerciseGymGifsDB + free-exercise-db açık veri kaynakları'}. İçerik lisans ve atıf koşulları kaynağın güncel kullanım şartlarına göre değerlendirilmelidir.</p></div></div> }
 
+// The GLB uses anatomical muscle names (usually duplicated with a `.001` suffix).
+// Keep these patterns anchored and ordered: a mesh must resolve to one group only.
 const anatomyMuscleMap = [
-  [/pectoral|pectoralis|chest/i, 'Göğüs'], [/ab(s|dominal)?/i, 'Karın'], [/biceps/i, 'Biceps'], [/triceps/i, 'Triceps'], [/deltoid|shoulder/i, 'Omuz'], [/lat(issimus)?/i, 'Sırt (Lat)'], [/trap(ezius)?/i, 'Trapez'], [/quad(riceps)?/i, 'Ön Bacak'], [/hamstring/i, 'Arka Bacak'], [/glute/i, 'Kalça'], [/calf|gastrocnemius|soleus/i, 'Baldır'], [/forearm/i, 'Ön Kol'], [/lower.?back|lumbar/i, 'Alt Sırt']
+  [/^(?:clavicular head of pectoralis major|sternocostal head of pectoralis major|\(abdominal part of pectoralis major\)|pectoralis minor|pectoral(?:is)?)(?: muscle)?$/i, 'Göğüs'],
+  [/^(?:rectus abdominis|external abdominal oblique|internal abdominal oblique|transversus abdominis|pyramidalis|linea alba)(?: muscle)?$/i, 'Karın'],
+  [/^(?:long head|short head) of biceps brachii$|^brachialis muscle$|^coracobrachialis muscle$/i, 'Biceps'],
+  [/^(?:medial|lateral|long) head of triceps brachii$/i, 'Triceps'],
+  [/^(?:acromial|clavicular|scapular spinal) part of deltoid muscle$/i, 'Omuz'],
+  [/^latissimus dorsi muscle$/i, 'Sırt (Lat)'],
+  [/^(?:ascending|descending|transverse) part of trapezius muscle$/i, 'Trapez'],
+  [/^(?:rhomboid major|rhomboid minor) muscle$/i, 'Orta Sırt'],
+  [/^(?:iliocostalis lumborum|multifidus lumborum|interspinales lumborum|quadratus lumborum) muscle$|^quadratus lumborum$/i, 'Alt Sırt'],
+  [/^(?:iliocostalis thoracis|longissimus thoracis|spinalis thoracis|multifidus thoracis|interspinales thoracis|semispinalis thoracis|rotatores|serratus posterior superior|serratus posterior inferior) muscle(?:s)?$/i, 'Orta Sırt'],
+  [/^(?:sternocleidomastoid|scalenus (?:anterior|medius|posterior)|longus (?:capitis|colli)|rectus (?:anterior|lateralis) capitis|obliquus (?:inferior|superior) capitis|splenius (?:capitis|colli)|semispinalis colli|multifidus colli|interspinales colli muscles?|longissimus (?:capitis|colli)|spinalis (?:capitis|colli)|platysma)(?: muscle)?$/i, 'Boyun'],
+  [/^(?:rectus femoris|vastus lateralis|vastus medialis|vastus intermedius) muscle$/i, 'Ön Bacak'],
+  [/^(?:long head|short head) of biceps femoris$|^(?:semimembranosus|semitendinosus) muscle$/i, 'Arka Bacak'],
+  [/^(?:lateral|medial) head of gastrocnemius$|^(?:soleus|plantaris|popliteus|tibialis posterior) muscle$/i, 'Baldır'],
+  [/^(?:gluteus maximus|piriformis|quadratus femoris|inferior gemellus|superior gemellus|obturator internus) muscle$|^obturator internus$/i, 'Kalça'],
+  [/^(?:superficial|deep) head of pronator teres$|^(?:humeral|ulnar) head of flexor carpi ulnaris$|^humero-ulnar head of flexor digitorum superficialis$|^radial head of flexor digitorum superficialis$|^(?:humeral|ulnar) head of extensor carpi ulnaris$|^(?:flexor carpi radialis|palmaris longus|flexor digitorum profundus|flexor pollicis longus|pronator quadratus|extensor digitorum|brachioradialis|extensor carpi radialis longus|extensor carpi radialis brevis|anconeus|extensor digiti minimi|supinator|flexor carpi ulnaris|extensor carpi ulnaris)(?: muscle)?$/i, 'Ön Kol'],
+  [/^(?:adductor magnus|adductor longus|adductor brevis|pectineus|gracilis)(?: muscle)?$|^obturator externus$/i, 'İç Bacak'],
+  [/^(?:sartorius|gluteus medius|gluteus minimus) muscle$/i, 'Dış Bacak']
 ]
-const mapAnatomyMesh = (name) => anatomyMuscleMap.find(([pattern]) => pattern.test(name))?.[1] || ''
+const normalizeAnatomyMeshName = (name) => String(name || '').trim().replace(/\.\d+$/, '').replace(/\s+/g, ' ')
+const mapAnatomyMesh = (name) => {
+  const normalizedName = normalizeAnatomyMeshName(name)
+  return anatomyMuscleMap.find(([pattern]) => pattern.test(normalizedName))?.[1] || ''
+}
 
 function AnatomyModel({ side, muscle, selectMuscle }) {
   const { scene } = useGLTF('/body.glb')
   const model = useMemo(() => { const clone = scene.clone(true); clone.traverse((object) => { if (object.isMesh) { object.material = Array.isArray(object.material) ? object.material.map((material) => material.clone()) : object.material.clone(); object.castShadow = true; object.receiveShadow = true } }); const bounds = new THREE.Box3().setFromObject(clone); const size = bounds.getSize(new THREE.Vector3()); const center = bounds.getCenter(new THREE.Vector3()); clone.position.sub(center); clone.scale.setScalar(size.y ? 2.55 / size.y : 1); return clone }, [scene])
-  useEffect(() => { model.traverse((object) => { if (!object.isMesh) return; const mapped = mapAnatomyMesh(object.name); const materials = Array.isArray(object.material) ? object.material : [object.material]; materials.forEach((material) => { if (!material?.color) return; material.color.set(mapped && mapped === muscle ? '#c9f36b' : '#aeb6ba'); material.metalness = .72; material.roughness = .34; if (material.emissive) { material.emissive.set(mapped && mapped === muscle ? '#526b24' : '#101416'); material.emissiveIntensity = mapped && mapped === muscle ? .38 : .08 } }) }) }, [model, muscle])
+  useEffect(() => {
+    model.traverse((object) => {
+      if (!object.isMesh) return
+      const materials = Array.isArray(object.material) ? object.material : [object.material]
+      materials.forEach((material) => {
+        if (!material?.color) return
+        material.color.set('#aeb6ba')
+        material.metalness = .72
+        material.roughness = .34
+        if (material.emissive) {
+          material.emissive.set('#101416')
+          material.emissiveIntensity = .08
+        }
+      })
+    })
+    if (!muscle) return
+    model.traverse((object) => {
+      if (!object.isMesh || mapAnatomyMesh(object.name) !== muscle) return
+      const materials = Array.isArray(object.material) ? object.material : [object.material]
+      materials.forEach((material) => {
+        if (!material?.color) return
+        material.color.set('#c9f36b')
+        if (material.emissive) {
+          material.emissive.set('#526b24')
+          material.emissiveIntensity = .38
+        }
+      })
+    })
+  }, [model, muscle])
   const handleClick = (event) => { event.stopPropagation(); const mapped = mapAnatomyMesh(event.object?.name || ''); if (mapped) selectMuscle(mapped === muscle ? '' : mapped) }
   return <group rotation={[0, side === 'Arka' ? Math.PI : 0, 0]} onClick={handleClick}><primitive object={model} /></group>
 }
