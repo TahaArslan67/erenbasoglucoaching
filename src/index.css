@@ -32,6 +32,12 @@
 .exercise-info span,.exercise-info b{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .exercise-info span{margin-bottom:5px;color:#7e888d}
 .exercise-info b{font-size:11px;color:#aeb7bb}
+/* About portrait uses the homepage photography */
+.portrait-card{background:#171a18;overflow:hidden}
+.portrait-card:before{display:none}
+.portrait-card:after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,12,11,.05) 35%,rgba(10,12,11,.88) 100%)}
+.portrait-card img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 18%;filter:grayscale(1) contrast(1.06) brightness(.82)}
+.portrait-card span,.portrait-card small{z-index:1}
 .anatomy-canvas{height:350px;width:100%;touch-action:none}.anatomy-canvas canvas{display:block!important;width:100%!important;height:100%!important}.model-attribution{margin:10px 2px 0;color:#667176;font:9px/1.5 Manrope;letter-spacing:.02em}.model-attribution a{color:#9ca8ad;text-decoration:underline;text-underline-offset:2px}.model-map-panel{overflow:hidden}.model-map-bottom{pointer-events:none}
 @media(max-width:800px){.anatomy-canvas{height:395px}.model-attribution{font-size:8px}.model-map-panel{min-height:440px}}
 @media(max-width:480px){.anatomy-canvas{height:360px}.model-map-bottom{font-size:9px}}
