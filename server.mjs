@@ -6,7 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import pg from 'pg'
 
 const { Pool } = pg
-const mediaHosts = new Set(['cdn.jsdelivr.net', 'raw.githubusercontent.com', 'images.unsplash.com'])
+const mediaHosts = new Set(['cdn.jsdelivr.net', 'fastly.jsdelivr.net', 'raw.githubusercontent.com', 'images.unsplash.com'])
 const root = fileURLToPath(new URL('.', import.meta.url))
 const dist = join(root, 'dist')
 const port = Number(process.env.PORT || 10000)
@@ -45,7 +45,10 @@ async function api(req, res, pathname, searchParams) {
     try { remoteUrl = new URL(target) } catch { return json(res, 400, { error: 'invalid_media_url' }) }
     if (remoteUrl.protocol !== 'https:' || !mediaHosts.has(remoteUrl.hostname.toLowerCase())) return json(res, 403, { error: 'media_host_not_allowed' })
     try {
-      const upstream = await fetch(remoteUrl, { redirect: 'error' })
+      const upstream = await fetch(remoteUrl, { redirect: 'follow' })
+      let finalUrl
+      try { finalUrl = new URL(upstream.url) } catch { return json(res, 502, { error: 'media_upstream_failed' }) }
+      if (finalUrl.protocol !== 'https:' || !mediaHosts.has(finalUrl.hostname.toLowerCase())) return json(res, 403, { error: 'media_redirect_not_allowed' })
       if (!upstream.ok) return json(res, 502, { error: 'media_upstream_failed' })
       const headers = { 'content-type': upstream.headers.get('content-type') || 'application/octet-stream' }
       for (const header of ['cache-control', 'expires', 'etag', 'last-modified']) {

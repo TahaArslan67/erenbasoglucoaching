@@ -272,6 +272,15 @@ const mapAnatomyMesh = (name) => {
   const normalizedName = normalizeAnatomyMeshName(name)
   return anatomyMuscleMap.find(([pattern]) => pattern.test(normalizedName))?.[1] || ''
 }
+const resolveAnatomyMesh = (object) => {
+  let current = object
+  while (current) {
+    const mapped = mapAnatomyMesh(current.name)
+    if (mapped) return mapped
+    current = current.parent
+  }
+  return ''
+}
 
 function AnatomyModel({ side, muscle, selectMuscle }) {
   const { scene } = useGLTF('/body.glb')
@@ -293,7 +302,7 @@ function AnatomyModel({ side, muscle, selectMuscle }) {
     })
     if (!muscle) return
     model.traverse((object) => {
-      if (!object.isMesh || mapAnatomyMesh(object.name) !== muscle) return
+      if (!object.isMesh || resolveAnatomyMesh(object) !== muscle) return
       const materials = Array.isArray(object.material) ? object.material : [object.material]
       materials.forEach((material) => {
         if (!material?.color) return
@@ -305,8 +314,8 @@ function AnatomyModel({ side, muscle, selectMuscle }) {
       })
     })
   }, [model, muscle])
-  const handleClick = (event) => { event.stopPropagation(); const mapped = mapAnatomyMesh(event.object?.name || ''); if (mapped) selectMuscle(mapped === muscle ? '' : mapped) }
-  return <group rotation={[0, side === 'Arka' ? Math.PI : 0, 0]} onClick={handleClick}><primitive object={model} /></group>
+  const handleClick = (event) => { event.stopPropagation(); const mapped = resolveAnatomyMesh(event.object); if (mapped) selectMuscle(mapped === muscle ? '' : mapped) }
+  return <group rotation={[0, side === 'Arka' ? Math.PI : 0, 0]}><primitive object={model} onClick={handleClick} /></group>
 }
 useGLTF.preload('/body.glb')
 
