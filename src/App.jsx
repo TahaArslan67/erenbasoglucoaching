@@ -245,14 +245,14 @@ function ExerciseAcademy() { const [remoteExercises, setRemoteExercises] = useSt
 
 function ExerciseDetail({ exercise, close }) { return <div className="exercise-detail-overlay" onClick={close}><div className="exercise-detail" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}>×</button><div className="detail-media"><ExerciseImage exercise={exercise} detail /></div><div className="section-kicker">{exercise.source || 'EGZERSİZ AKADEMİSİ'}</div><h2>{exercise.name}</h2><div className="detail-tags"><span>{exercise.body}</span><span>{exercise.equipment}</span><span>{exercise.level}</span></div>{exercise.instructions?.length > 0 && <div className="detail-instructions"><h3>Uygulama adımları</h3><ol>{exercise.instructions.slice(0, 6).map((instruction) => <li key={instruction}>{instruction}</li>)}</ol></div>}<p className="detail-license">Görsel/video kaynağı: {exercise.source || 'ExerciseGymGifsDB + free-exercise-db açık veri kaynakları'}. İçerik lisans ve atıf koşulları kaynağın güncel kullanım şartlarına göre değerlendirilmelidir.</p></div></div> }
 
-// The GLB uses anatomical muscle names (usually duplicated with a `.001` suffix).
-// Keep these patterns anchored and ordered: a mesh must resolve to one group only.
+// Blender appends numeric suffixes to duplicated objects. The GLB also stores
+// human-readable anatomical names in node.userData.name/nameDetail.
 const anatomyMuscleMap = [
   [/^(?:clavicular head of pectoralis major|sternocostal head of pectoralis major|\(abdominal part of pectoralis major\)|pectoralis minor|pectoral(?:is)?)(?: muscle)?$/i, 'Göğüs'],
   [/^(?:rectus abdominis|external abdominal oblique|internal abdominal oblique|transversus abdominis|pyramidalis|linea alba)(?: muscle)?$/i, 'Karın'],
-  [/^(?:long head|short head) of biceps brachii$|^brachialis muscle$|^coracobrachialis muscle$/i, 'Biceps'],
-  [/^(?:medial|lateral|long) head of triceps brachii$/i, 'Triceps'],
-  [/^(?:acromial|clavicular|scapular spinal) part of deltoid muscle$/i, 'Omuz'],
+  [/^(?:long head|short head) of biceps brachii$|^biceps brachii(?: muscle)?$|^brachialis muscle$|^coracobrachialis muscle$/i, 'Biceps'],
+  [/^(?:medial|lateral|long) head of triceps brachii$|^triceps brachii(?: muscle)?$/i, 'Triceps'],
+  [/^(?:acromial|clavicular|scapular spinal) part of deltoid muscle$|^deltoid(?: muscle)?$/i, 'Omuz'],
   [/^latissimus dorsi muscle$/i, 'Sırt (Lat)'],
   [/^(?:ascending|descending|transverse) part of trapezius muscle$/i, 'Trapez'],
   [/^(?:rhomboid major|rhomboid minor) muscle$/i, 'Orta Sırt'],
@@ -267,23 +267,41 @@ const anatomyMuscleMap = [
   [/^(?:adductor magnus|adductor longus|adductor brevis|pectineus|gracilis)(?: muscle)?$|^obturator externus$/i, 'İç Bacak'],
   [/^(?:sartorius|gluteus medius|gluteus minimus) muscle$/i, 'Dış Bacak']
 ]
-const normalizeAnatomyMeshName = (name) => String(name || '').trim().replace(/\.\d+$/, '').replace(/\s+/g, ' ')
+const normalizeAnatomyMeshName = (name) => String(name || '').trim().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/(?:\.\d+|[\s_-]+\d+)$/, '').replace(/[_.-]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
 const mapAnatomyMesh = (name) => {
   const normalizedName = normalizeAnatomyMeshName(name)
+  if (!normalizedName) return ''
+  if (/\bbiceps femoris\b/.test(normalizedName)) return 'Arka Bacak'
+  if (/^(?:muscle )?biceps$|^biceps muscle$|^muscle biceps$/.test(normalizedName)) return 'Biceps'
+  if (/^muscle (?:biceps brachii|long head of biceps brachii|short head of biceps brachii)$/.test(normalizedName)) return 'Biceps'
   return anatomyMuscleMap.find(([pattern]) => pattern.test(normalizedName))?.[1] || ''
 }
-const resolveAnatomyMesh = (object) => {
-  let current = object
-  while (current) {
-    const mapped = mapAnatomyMesh(current.name)
-    if (mapped) return mapped
-    current = current.parent
-  }
-  return ''
+const anatomyUserDataKeys = ['name', 'nameDetail', 'meshName', 'anatomyName', 'label', 'title']
+const anatomyNameCandidates = (object) => {
+  const names = []
+  if (object?.name) names.push({ value: object.name, priority: 0 })
+  if (object?.userData) anatomyUserDataKeys.forEach((key) => { if (typeof object.userData[key] === 'string') names.push({ value: object.userData[key], priority: key === 'nameDetail' ? 1 : 2 }) })
+  return names
 }
+const resolveAnatomyMeshDetails = (object) => {
+  const candidates = []
+  let current = object
+  let depth = 0
+  while (current) {
+    anatomyNameCandidates(current).forEach((candidate) => candidates.push({ ...candidate, depth }))
+    current = current.parent
+    depth += 1
+  }
+  const mappedCandidates = candidates.map((candidate) => ({ ...candidate, mapped: mapAnatomyMesh(candidate.value) })).filter((candidate) => candidate.mapped)
+  const exactCandidate = mappedCandidates.find((candidate) => /biceps femoris|pectoralis|triceps brachii|biceps brachii|head of|muscle$/.test(normalizeAnatomyMeshName(candidate.value)))
+  const match = exactCandidate || mappedCandidates[0]
+  return match ? { mapped: match.mapped, name: String(match.value) } : { mapped: '', name: '' }
+}
+const resolveAnatomyMesh = (object) => resolveAnatomyMeshDetails(object).mapped
 
-function AnatomyModel({ side, muscle, selectMuscle }) {
+function AnatomyModel({ side, muscle, selectMuscle, reportMesh }) {
   const { scene } = useGLTF('/body.glb')
+  const lastPointerDown = useMemo(() => ({ time: 0 }), [])
   const model = useMemo(() => { const clone = scene.clone(true); clone.traverse((object) => { if (object.isMesh) { object.material = Array.isArray(object.material) ? object.material.map((material) => material.clone()) : object.material.clone(); object.castShadow = true; object.receiveShadow = true } }); const bounds = new THREE.Box3().setFromObject(clone); const size = bounds.getSize(new THREE.Vector3()); const center = bounds.getCenter(new THREE.Vector3()); clone.position.sub(center); clone.scale.setScalar(size.y ? 2.55 / size.y : 1); return clone }, [scene])
   useEffect(() => {
     model.traverse((object) => {
@@ -294,10 +312,8 @@ function AnatomyModel({ side, muscle, selectMuscle }) {
         material.color.set('#aeb6ba')
         material.metalness = .72
         material.roughness = .34
-        if (material.emissive) {
-          material.emissive.set('#101416')
-          material.emissiveIntensity = .08
-        }
+        if (material.emissive) { material.emissive.set('#101416'); material.emissiveIntensity = .08 }
+        material.needsUpdate = true
       })
     })
     if (!muscle) return
@@ -307,22 +323,33 @@ function AnatomyModel({ side, muscle, selectMuscle }) {
       materials.forEach((material) => {
         if (!material?.color) return
         material.color.set('#c9f36b')
-        if (material.emissive) {
-          material.emissive.set('#526b24')
-          material.emissiveIntensity = .38
-        }
+        if (material.emissive) { material.emissive.set('#526b24'); material.emissiveIntensity = .38 }
+        material.needsUpdate = true
       })
     })
   }, [model, muscle])
-  const handleClick = (event) => { event.stopPropagation(); const mapped = resolveAnatomyMesh(event.object); if (mapped) selectMuscle(mapped === muscle ? '' : mapped) }
-  return <group rotation={[0, side === 'Arka' ? Math.PI : 0, 0]}><primitive object={model} onClick={handleClick} /></group>
+  const handlePointer = (event) => {
+    if (event.type === 'click' && performance.now() - lastPointerDown.time < 350) return
+    if (event.type === 'pointerdown') lastPointerDown.time = performance.now()
+    const intersections = event.intersections || [{ object: event.object }]
+    const hit = intersections.map((intersection) => ({ object: intersection.object, details: resolveAnatomyMeshDetails(intersection.object) })).find((candidate) => candidate.details.mapped)
+    if (!hit) return
+    event.stopPropagation()
+    reportMesh(hit.details.name, hit.details.mapped)
+    selectMuscle(hit.details.mapped === muscle ? '' : hit.details.mapped)
+  }
+  return <group rotation={[0, side === 'Arka' ? Math.PI : 0, 0]}><primitive object={model} onPointerDown={handlePointer} onClick={handlePointer} /></group>
 }
 useGLTF.preload('/body.glb')
 
 function MuscleModel({ side, muscle, selectMuscle }) {
+  const [lastMesh, setLastMesh] = useState('')
+  const [lastMappedMuscle, setLastMappedMuscle] = useState('')
+  const reportMesh = (name, mapped) => { setLastMesh(name); setLastMappedMuscle(mapped) }
   return <div className="model-map-panel">
     <div className="model-map-top"><span className="model-status"><i /> 3D KAS MODELİ</span><span className="model-orbit">{side === 'Ön' ? 'FRONT VIEW' : 'BACK VIEW'}</span></div>
-    <div className="anatomy-canvas"><Canvas camera={{ position: [0, 1.15, 3.2], fov: 34 }} dpr={[1, 2]} gl={{ antialias: true }}><ambientLight intensity={1.2} /><directionalLight position={[3, 4, 4]} intensity={2.2} /><directionalLight position={[-3, 1, -2]} intensity={1} /><AnatomyModel side={side} muscle={muscle} selectMuscle={selectMuscle} /><Environment preset="studio" /><OrbitControls enablePan={false} minDistance={2} maxDistance={5} target={[0, 1, 0]} /></Canvas></div>
+    <div className="anatomy-canvas"><Canvas style={{ cursor: 'pointer' }} camera={{ position: [0, 1.15, 3.2], fov: 34 }} dpr={[1, 2]} gl={{ antialias: true }}><ambientLight intensity={1.2} /><directionalLight position={[3, 4, 4]} intensity={2.2} /><directionalLight position={[-3, 1, -2]} intensity={1} /><AnatomyModel side={side} muscle={muscle} selectMuscle={selectMuscle} reportMesh={reportMesh} /><Environment preset="studio" /><OrbitControls enablePan={false} minDistance={2} maxDistance={5} target={[0, 1, 0]} /></Canvas></div>
+    <div className="model-map-debug" aria-live="polite">Mesh: {lastMesh || '—'} · Grup: {lastMappedMuscle || '—'}</div>
     <div className="model-map-bottom"><span className="selected-muscle-badge">{muscle || 'Tüm kas grupları'}</span><span>{muscle ? 'Seçili kas · egzersizler filtrelendi' : 'Bir kas bölgesine dokun'}</span></div>
   </div>
 }
