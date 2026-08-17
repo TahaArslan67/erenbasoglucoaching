@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: erenbasoglu-coaching
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: erenbasoglu-coaching-db
+    plan: free
+          property: connectionString
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_TOKEN_SECRET
+        generateValue: true
+
+databases:
+  - name: erenbasoglu-coaching-db
