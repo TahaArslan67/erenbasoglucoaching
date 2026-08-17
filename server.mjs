@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import pg from 'pg'
 
 const { Pool } = pg
+const mediaHosts = new Set(['cdn.jsdelivr.net', 'raw.githubusercontent.com', 'images.unsplash.com'])
 const root = fileURLToPath(new URL('.', import.meta.url))
 const dist = join(root, 'dist')
 const port = Number(process.env.PORT || 10000)
@@ -37,7 +38,25 @@ function authorized(req) {
   try { return JSON.parse(Buffer.from(payload, 'base64url').toString()).exp > Date.now() } catch { return false }
 }
 async function body(req) { let raw = ''; for await (const chunk of req) raw += chunk; if (raw.length > 30_000_000) throw new Error('payload_too_large'); return raw ? JSON.parse(raw) : {} }
-async function api(req, res, pathname) {
+async function api(req, res, pathname, searchParams) {
+  if (req.method === 'GET' && pathname === '/api/media') {
+    const target = searchParams.get('url')
+    let remoteUrl
+    try { remoteUrl = new URL(target) } catch { return json(res, 400, { error: 'invalid_media_url' }) }
+    if (remoteUrl.protocol !== 'https:' || !mediaHosts.has(remoteUrl.hostname.toLowerCase())) return json(res, 403, { error: 'media_host_not_allowed' })
+    try {
+      const upstream = await fetch(remoteUrl, { redirect: 'error' })
+      if (!upstream.ok) return json(res, 502, { error: 'media_upstream_failed' })
+      const headers = { 'content-type': upstream.headers.get('content-type') || 'application/octet-stream' }
+      for (const header of ['cache-control', 'expires', 'etag', 'last-modified']) {
+        const value = upstream.headers.get(header)
+        if (value) headers[header] = value
+      }
+      res.writeHead(200, headers)
+      res.end(Buffer.from(await upstream.arrayBuffer()))
+    } catch { return json(res, 502, { error: 'media_upstream_failed' }) }
+    return
+  }
   if (req.method === 'POST' && pathname === '/api/auth/login') {
     const credentials = await body(req)
     const username = process.env.ADMIN_USERNAME || 'erenbasoglu'
@@ -59,5 +78,5 @@ async function api(req, res, pathname) {
 
 function staticFile(res, pathname) { const requested = pathname === '/' ? '/index.html' : pathname; const file = normalize(join(dist, requested)); if (!file.startsWith(dist) || !existsSync(file)) return false; const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.webp': 'image/webp' }; res.writeHead(200, { 'content-type': types[extname(file)] || 'application/octet-stream' }); createReadStream(file).pipe(res); return true }
 
-const server = createServer(async (req, res) => { try { const url = new URL(req.url, `http://${req.headers.host}`); if (url.pathname.startsWith('/api/')) return await api(req, res, url.pathname); if (!staticFile(res, url.pathname)) staticFile(res, '/index.html') } catch (error) { json(res, error.message === 'payload_too_large' ? 413 : 500, { error: 'server_error' }) } })
+const server = createServer(async (req, res) => { try { const url = new URL(req.url, `http://${req.headers.host}`); if (url.pathname.startsWith('/api/')) return await api(req, res, url.pathname, url.searchParams); if (!staticFile(res, url.pathname)) staticFile(res, '/index.html') } catch (error) { json(res, error.message === 'payload_too_large' ? 413 : 500, { error: 'server_error' }) } })
 initDatabase().then(() => server.listen(port, '0.0.0.0', () => console.log(`Eren Coaching server listening on ${port}`))).catch((error) => { console.error(error); process.exit(1) })
