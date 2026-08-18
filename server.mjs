@@ -20,7 +20,7 @@ const defaultContent = {
 
 async function initDatabase() {
   if (!pool) return
-  await pool.query(`CREATE TABLE IF NOT EXISTS site_content (section TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); CREATE TABLE IF NOT EXISTS transformations (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, detail TEXT NOT NULL, before_image TEXT NOT NULL, after_image TEXT NOT NULL, composite TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); CREATE TABLE IF NOT EXISTS applications (id BIGSERIAL PRIMARY KEY, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS site_content (section TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); CREATE TABLE IF NOT EXISTS transformations (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, detail TEXT NOT NULL, before_image TEXT NOT NULL, after_image TEXT NOT NULL, composite TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); CREATE TABLE IF NOT EXISTS applications (id BIGSERIAL PRIMARY KEY, payload JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); CREATE TABLE IF NOT EXISTS site_visits (id BIGSERIAL PRIMARY KEY, visitor_id TEXT NOT NULL, visit_date DATE NOT NULL, first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(visitor_id, visit_date)); CREATE INDEX IF NOT EXISTS site_visits_date_idx ON site_visits(visit_date);`)
   const existing = await pool.query('SELECT section FROM site_content')
   if (existing.rowCount === 0) for (const [section, value] of Object.entries(defaultContent)) await pool.query('INSERT INTO site_content(section, value) VALUES ($1, $2)', [section, value])
 }
@@ -71,7 +71,21 @@ async function api(req, res, pathname, searchParams) {
   if (req.method === 'GET' && pathname === '/api/content') { const rows = await pool.query('SELECT section, value FROM site_content'); return json(res, 200, Object.fromEntries(rows.rows.map((row) => [row.section, row.value]))) }
   if (req.method === 'GET' && pathname === '/api/transformations') { const rows = await pool.query('SELECT id, name, detail, before_image AS "beforeImage", after_image AS "afterImage", composite, created_at AS "createdAt" FROM transformations ORDER BY created_at DESC'); return json(res, 200, rows.rows) }
   if (req.method === 'POST' && pathname === '/api/applications') { const payload = await body(req); const result = await pool.query('INSERT INTO applications(payload) VALUES ($1) RETURNING id, created_at AS "createdAt"', [payload]); return json(res, 201, result.rows[0]) }
+  if (req.method === 'POST' && pathname === '/api/visits') {
+    const payload = await body(req)
+    const visitorId = typeof payload.visitorId === 'string' ? payload.visitorId.trim().slice(0, 100) : ''
+    if (!visitorId) return json(res, 400, { error: 'visitor_id_required' })
+    await pool.query(`INSERT INTO site_visits(visitor_id, visit_date) VALUES ($1, (NOW() AT TIME ZONE 'Europe/Istanbul')::date) ON CONFLICT(visitor_id, visit_date) DO NOTHING`, [visitorId])
+    return json(res, 204, {})
+  }
   if (!authorized(req)) return json(res, 401, { error: 'unauthorized' })
+  if (req.method === 'GET' && pathname === '/api/visits') {
+    const [dailyResult, summaryResult] = await Promise.all([
+      pool.query(`WITH days AS (SELECT generate_series((NOW() AT TIME ZONE 'Europe/Istanbul')::date - 29, (NOW() AT TIME ZONE 'Europe/Istanbul')::date, interval '1 day')::date AS day), counts AS (SELECT visit_date, COUNT(*)::int AS visitors FROM site_visits WHERE visit_date >= (NOW() AT TIME ZONE 'Europe/Istanbul')::date - 29 GROUP BY visit_date) SELECT TO_CHAR(days.day, 'YYYY-MM-DD') AS date, COALESCE(counts.visitors, 0)::int AS visitors FROM days LEFT JOIN counts ON counts.visit_date = days.day ORDER BY days.day`),
+      pool.query(`SELECT COUNT(DISTINCT visitor_id)::int AS total, COUNT(*) FILTER (WHERE visit_date = (NOW() AT TIME ZONE 'Europe/Istanbul')::date)::int AS today FROM site_visits`),
+    ])
+    return json(res, 200, { total: summaryResult.rows[0].total, today: summaryResult.rows[0].today, days: dailyResult.rows })
+  }
   if (req.method === 'GET' && pathname === '/api/applications') { const rows = await pool.query('SELECT id, payload, created_at AS "createdAt" FROM applications ORDER BY created_at DESC'); return json(res, 200, rows.rows.map((row) => ({ id: row.id, ...row.payload, createdAt: row.createdAt }))) }
   if (req.method === 'DELETE' && pathname.startsWith('/api/applications/')) { const id = pathname.slice('/api/applications/'.length); await pool.query('DELETE FROM applications WHERE id = $1', [id]); res.writeHead(204); return res.end() }
   if (req.method === 'PUT' && pathname.startsWith('/api/content/')) { const section = decodeURIComponent(pathname.slice('/api/content/'.length)); const value = await body(req); await pool.query('INSERT INTO site_content(section, value) VALUES ($1, $2) ON CONFLICT (section) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()', [section, value]); return json(res, 200, { section, value }) }
